@@ -1,0 +1,21 @@
+schema_version = "1.0.0"
+
+id = "preflight"
+version = "3.4.0"
+name = "Pre-Flight"
+tagline = "Pre-bake prep and checks for low and high poly meshes"
+maintainer = "Jordan Moss"
+type = "add-on"
+
+tags = ["Bake", "Mesh", "UV", "Rigging", "Pipeline"]
+
+blender_version_min = "4.2.0"
+
+license = ["SPDX:GPL-3.0-or-later"]
+copyright = ["2026 Jordan Moss"]
+
+[permissions]
+files = "Read exported texture maps from the chosen texture folder"
+
+[build]
+paths_exclude_pattern = ["__pycache__/", "/.git/", "*.zip", "*.pyc"]
