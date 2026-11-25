@@ -1,169 +1,199 @@
 # Pre-Flight
 
-Pre-bake prep and checks for Blender. Pre-Flight gets low and high poly meshes ready
-for baking in Substance Painter, Marmoset Toolbag, Fyr Baker, Blender or xNormal, and
-catches what would spoil the bake before you export.
+A Blender add-on that gets low and high poly meshes ready to bake, checks them for the
+problems that spoil a bake, and rigs hard-surface models such as vehicles and machines.
 
-Blender 4.2 or newer (developed on 5.2). Author: Jordan Moss. Licence: GPL-3.0-or-later.
+![A tracked excavator rigged with Pre-Flight](docs/images/20_view_excavator.png)
 
-**New here? Read the [User Guide](docs/USER_GUIDE.md)**: every tab and tool explained in plain
-language, with pictures.
+- **Blender:** 4.2 or newer
+- **Works with:** Substance Painter, Substance Designer, Marmoset Toolbag, Fyr Baker,
+  Blender and xNormal
+- **Author:** Jordan Moss
+- **Licence:** GPL-3.0-or-later
 
-## What it does
+**New here? Read the [User Guide](docs/USER_GUIDE.md).** It explains every tab and tool
+in plain language, with pictures.
 
-The panel lives in the 3D View sidebar (**N** > **Pre-Flight**), with a tab strip down
-its left side. Map size is in Shading > Textures, the baker preset in Baker, and Full Prep with the Validate, Names and Projection checks in Checks.
+## Contents
 
-- **Shading**: hard edges from UV seams or island borders (mirror lines stay soft),
-  Triangulate modifier, clearing custom normals. **Textures** loads maps exported from
-  Substance Painter (every default export preset, UDIMs included) into the materials,
-  reloads them, watches the folder for re-exports, and has a normal map green-channel
-  flip. AO multiplies into the base colour only where the surface isn't lit (EEVEE).
-- **UVs**: mirror / array copies offset +1U (with an overlay), packing with
-  UVPackmaster, Zen UV or Blender, stacking similar islands, texel density overlay and
-  tools, and **Match Map Ratio** for non-square maps.
-- **Low / High**: collections, pairing, naming (`_low/_high`, `_lo/_hi`, `_lp/_hp`,
-  `_l/_h`), Match & Rename, and explode for checking pairs.
-- **Baker**: baker presets (the prep settings that suit each baker, plus a checklist for
-  the baker's side) and **ID Colors** for the highs (per object, part or material).
-- **Rigging** (hard surface): **Mirror Parts** copies parts to the other side with
-  properly mirrored pivots (positive scale, side names, hierarchy and bone parents
-  carried over). **Bones from Origins** adds a bone on each part's pivot, chained by
-  the part hierarchy under a root, and binds each part rigidly (bone parent or a 100%
-  vertex group). **Piston**, **Link Gears** (meshed or chained, by size ratio;
-  with a chain or track selected, the active wheel drives it and the other wheels turn
-  with it) and
-  **Chain Along Curve** (one bone per link, driven by a sprocket; one skinned mesh, or
-  **Instances** that share the link's mesh, with **Keep Original** leaving the link
-  where it is to edit; **Path Around Wheels**
-  wraps the path round the selected wheels like a chain or belt, about the axis each
-  wheel is round about, or the Axle you set; **Calculate Links** sets
-  the link count that fills it most exactly; **Roll Links** turns a finished chain's
-  links about the path to stand them up, lay them flat or flip them) cover the usual
-  mechanisms, with **Wheel Spin**: wheels and sprockets roll by the distance the vehicle
-  really moves, by any control, and by their side's share of a turn, so tracks
-  counter-rotate on a spin. **Drive Control** adds a ground bone to drive and steer
-  with; **Bake Wheel Roll** keys each wheel from its own path for arcs and loops.
-  **Clear Drivers** strips every driver off the selection (or the selected bones). Bind
-  **Keep Hierarchy** leaves the parts' own parenting in place (they follow helper bones). **Bone from Hinge** and
-  **Origin to Hinge** take a hinge from an Edit Mode selection (axle vertices, an edge
-  ring or a face); **Hinge Limits** frees one axis within a range. **IK Chain** puts a
-  target and a pole on a chain of bones (an excavator arm, a robot arm), carrying the
-  hinge limits over as IK locks and limits; the target rides on the arm's mount, so
-  slewing the turret carries the reach round. **Set Up Controls** sorts bones into
-  coloured Controls / Mechanism / Deform collections and gives each control a shape: flat on the ground, or a Rotate arrow about a hinge. In Pose Mode, **Apply Shape** sets any bone's shape (Ring, Rotate, Square, Arrows, Diamond, Cross, Cube, Sphere), the axis it faces and its size; Set Up Controls keeps hand-set shapes, **Auto Shape** puts them back.
-  **Check Rig** and **Make Game Ready** get the rig past game engines: one root bone, a
-  safe rig name, rigid skinning, applied and positive scale, no dependency cycles, and
-  constraints and drivers baked to keys.
-- **Engine Mesh** (in Low / High): **Make Engine Mesh** duplicates the lows with
-  modifiers applied, `_low` removed and parts combined (all in one, per texture set or
-  per parent). Rigged parts stay skinned, the bake setup isn't touched, and a new copy
-  replaces the last one.
-- **Checks** / **Issues**: Validate, Check Names and Check Projection fill the Issues
-  list. Click an issue to isolate and frame it; Select picks the problem elements;
-  Fix (or Fix All) repairs it. Issues you mean to keep can be ignored, and stay ignored
-  across re-checks.
-
-Map size is set per scene, with an optional size per material (texture set). Padding,
-the padding and overlap checks, packing margins and texel density all follow it.
+- [Install](#install)
+- [Quick start](#quick-start)
+- [What's in the panel](#whats-in-the-panel)
+- [Features](#features)
+- [Optional add-ons](#optional-add-ons)
+- [Upgrading from Bake Prep](#upgrading-from-bake-prep)
+- [For developers](#for-developers)
 
 ## Install
 
-Download or build `dist/preflight-<version>.zip`, then in Blender open
-**Edit > Preferences > Get Extensions**, click the menu at the top right and choose
-**Install from Disk**, or drag the zip into the Blender window.
+1. Download `preflight-<version>.zip` from the
+   [Releases](https://github.com/jmossymoss/Pre-Flight/releases) page. Don't unzip it.
+2. In Blender, open **Edit > Preferences > Get Extensions**.
+3. Click the arrow at the top right and choose **Install from Disk**, then pick the zip.
+   Dragging the zip into the Blender window works too.
 
-To build the zip yourself:
+The panel is in the 3D View sidebar: press **N** and click the **Pre-Flight** tab.
 
-```
-python tools/build.py
-```
+## Quick start
 
-This validates the package and writes the zip to `dist/`. It finds Blender from an
-argument, the `BLENDER` environment variable or the default Windows install folder.
+1. **Low / High:** pick your Low and High collections, then press **Match & Rename**.
+2. **Baker:** pick the baker you use.
+3. **Shading:** set the map size under Textures.
+4. **UVs:** offset mirrored copies with **Mirror +1U**, then **Pack Selected**.
+5. **Checks:** press **Full Prep**, then **Validate**, **Names** and **Projection**.
+6. **Issues:** press **Fix All**, then fix what's left by hand.
 
-## Preferences
+## What's in the panel
 
-**Edit > Preferences > Add-ons > Pre-Flight**:
+![The Pre-Flight panel](docs/images/01_panel_overview.png)
 
-- **Interface**: sidebar tab name; a popup listing results after checks.
-- **Issues**: isolate an issue's objects when you click it; re-check after fixes (turn
-  off on very large scenes, and the list is marked out of date instead).
-- **Packing and Textures**: the heuristic search time for packs that can't be stopped
-  by hand (Fix All); how often Auto Reload checks for re-exported textures.
-- **Overlay Colours**: the UV offset and texel density overlay colours.
-- **Defaults for New Files**: map size, padding, low/high suffixes and baker preset.
-  **Apply to This Scene** sets them on the open scene.
-- **Integrations**: turn UVPackmaster or Zen UV use on or off.
+A tab strip runs down the left side of the panel. Each tab is one page:
+
+| Tab | What it's for |
+| --- | --- |
+| **Shading** | Hard edges, triangulation, custom normals, and loading baked textures |
+| **UVs** | Mirrored copies, packing, stacking and texel density |
+| **Low / High** | Collections, pairing, naming, explode and the engine mesh |
+| **Baker** | Presets for each baker, and ID colours |
+| **Rigging** | Bones, hinges, pistons, gears, chains, tracks, wheels and game export |
+| **Checks** | Full Prep and the checks that look for bake problems |
+| **Issues** | The list of what the checks found, with fixes |
+
+## Features
+
+### Shading
+
+- **Hard Edges from UVs:** marks sharp edges along UV seams or island borders. Mirror
+  lines stay soft.
+- **Triangulate:** adds a Triangulate modifier so the baker and the engine split quads
+  the same way.
+- **Custom Normals:** clears custom normals that override sharp edges.
+- **Textures:** sets the map size, per scene or per material. Loads maps exported from
+  Substance Painter (every default preset, UDIMs included), reloads them, watches the
+  folder for re-exports, and flips a normal map's green channel.
+
+### UVs
+
+- **Mirror / Array Copies:** offsets the copies one tile (+1U) for baking, with an
+  overlay showing which are done.
+- **Packing:** packs with UVPackmaster, Zen UV or Blender. Padding follows the map size.
+  **Match Map Ratio** handles non-square maps.
+- **Stacking:** stacks similar islands, and offsets the copies for the bake.
+- **Texel Density:** an overlay, a target, and a button to scale islands to it.
+
+### Low / High
+
+- **Collections:** which collection holds the lows and which the highs.
+- **Make Pairs:** duplicates a mesh as its bake partner, or pairs two you already have.
+- **Names:** `_low/_high`, `_lo/_hi`, `_lp/_hp` or `_l/_h`. **Match & Rename** pairs
+  each high with the low it overlaps most.
+- **Explode:** moves pairs apart so neighbours don't bake onto each other, and puts
+  them back.
+- **Engine Mesh:** copies the lows for the engine with modifiers applied, `_low`
+  removed and parts combined. The bake setup isn't touched.
+
+### Baker
+
+- **Preset:** sets Pre-Flight's prep to suit your baker, and lists what to set on the
+  baker's side.
+- **ID Colors:** flat colours on the highs for an ID map, per object, part or material.
+
+### Rigging
+
+For hard-surface models. Parts stay rigid and move on bones.
+
+**Bones**
+
+- **Mirror Parts:** copies parts to the other side with properly mirrored pivots and
+  positive scale.
+- **Bones from Origins:** one bone per part on its pivot, chained like the parts, under
+  a root. Parts are bound by bone parent, rigid weights, or with their own hierarchy
+  kept.
+- **Bone from Hinge** and **Origin to Hinge:** take a hinge from an Edit Mode selection.
+- **Hinge Limits:** one axis, within a range.
+- **IK Chain:** a target and a pole on a chain of bones, such as an excavator arm.
+
+**Mechanisms**
+
+- **Piston:** a cylinder and rod that stay lined up between two mounts.
+- **Link Gears:** gears turn together by their size ratio, meshed or chained. With a
+  chain or track selected, the active wheel drives it and the other wheels follow.
+- **Chains & Tracks:**
+  - **Path Around Wheels** wraps a path round the selected wheels.
+  - **Calculate Links** works out how many links fit.
+  - **Chain Along Curve** builds the chain, one bone per link, driven by a sprocket.
+  - **Roll Links** turns the finished links to face the right way.
+  - **Instances** builds the chain from linked copies of one editable link.
+- **Wheel Spin:** wheels roll by the distance the vehicle really moves. Tracks
+  counter-rotate when it spins on the spot.
+- **Drive Control:** one bone on the ground to drive and steer with.
+- **Bake Wheel Roll:** keys each wheel from its real path, for arcs and loops.
+
+**Finishing**
+
+- **Set Up Controls:** sorts bones into coloured Controls, Mechanism and Deform groups
+  and gives each control a shape. **Apply Shape** sets one by hand.
+- **Clear Drivers:** removes the drivers the tools added.
+- **Check Rig** and **Make Game Ready:** one root bone, a safe name, rigid skinning,
+  applied scale, no dependency cycles, and motion baked to keys.
+
+### Checks and Issues
+
+- **Full Prep:** hard edges and triangulation in one click.
+- **Validate**, **Names** and **Projection:** look for bake problems, naming slips, and
+  rays that miss the high.
+- **Issues:** click an issue to isolate and frame it. **Select** picks the problem
+  elements, **Fix** or **Fix All** repairs them, and **Ignore** hides the ones you meant.
+
+## Optional add-ons
+
+Pre-Flight works on its own. It uses these when they're installed and enabled:
+
+| Add-on | Used for |
+| --- | --- |
+| **UVPackmaster 4** | Pack and Stack Similar. Its own panel settings are left alone. |
+| **Zen UV** | Pack, Stack Similar and Set Texel Density. |
+
+You can turn either off under **Edit > Preferences > Add-ons > Pre-Flight**. The same
+page has the sidebar tab name, overlay colours and the defaults for new files. The
+[User Guide](docs/USER_GUIDE.md#preferences) lists them all.
 
 ## Upgrading from Bake Prep
 
-Pre-Flight was called Bake Prep. Files saved with Bake Prep keep everything when they
-open in Pre-Flight: scene and per-material settings, ignored issues, UV ratio records,
-stacked-UV offsets, explode positions, texture node setups and the triangulate modifier
-are all moved to their new names on load. Uninstall Bake Prep before installing
-Pre-Flight.
+Pre-Flight used to be called Bake Prep. Uninstall Bake Prep before installing
+Pre-Flight. Files saved with Bake Prep keep all their settings: they're moved to the
+new names when the file opens.
 
-## Optional integrations
+## For developers
 
-Pre-Flight uses these add-ons when they're installed and enabled, and falls back to
-Blender's own tools without them:
-
-- **UVPackmaster 4**: Pack, the Pack UV fix and Fix All. Pack Selected and the Pack UV
-  fix run it interactively (progress in the viewport, Esc to stop). Pre-Flight's
-  UVPackmaster settings in the UVs tab (mode, rotation, heuristic search, precision)
-  are applied for each of its packs and UVPackmaster's own panel is left unchanged.
-  Packing a partial selection in Edit Mode packs it around the unselected islands.
-  Stack Similar uses its Align Similar.
-- **Zen UV**: Pack (with Zen's own engine and settings), Stack Similar (needs the Zen UV
-  Library) and Set Texel Density.
-
-## Development
-
-For a live install, link the `preflight` folder into Blender's extensions folder, for
-example on Windows:
+**Live install.** Link the `preflight` folder into Blender's extensions folder. On
+Windows:
 
 ```
 mklink /J "%APPDATA%\Blender Foundation\Blender\5.2\extensions\user_default\preflight" preflight
 ```
 
-`tools/make_icons.py` redraws the icons in `preflight/icons/`.
-
-## Layout
+**Build the zip.** This validates the package and writes it to `dist/`. It finds
+Blender from an argument, the `BLENDER` environment variable, or the default Windows
+install folder.
 
 ```
-preflight/
-  __init__.py            bl_info, register / unregister
-  blender_manifest.toml  extension manifest
-  preferences.py         add-on preferences and new-file defaults
-  properties.py          scene, material and window-manager settings
-  migrate.py             moves Bake Prep data to Pre-Flight names on load
-  issues.py              the Issues list: storage, staleness, isolate and frame
-  integrations.py        UVPackmaster 4 and Zen UV (pack, stack, texel density)
-  overlay.py             UV offset overlay
-  texel_overlay.py       texel density overlay
-  constants.py, utils.py
-  core/                  logic only, no operators or UI
-    checks.py            Validate, Check Names, Check Projection
-    problems.py          problem element masks for Select
-    geometry.py          cleanup, skew, triangulation reads
-    edges.py             edge analysis, hard edges, problem edges
-    uv_layout.py         UV islands, overlap and padding checks
-    uv_stack.py          stacked islands: find, offset +1U, restore
-    mapsize.py           map size, padding, UV ratio
-    texel.py             texel density
-    projection.py        low/high ray distances
-    naming.py            low/high suffixes and matching
-    dependencies.py      boolean cutters and modifier dependencies
-    bakers.py            baker presets
-    id_colors.py         ID colours
-    textures.py          Painter export names, texture sets
-    triangulate.py       the Triangulate modifier
-    rigging.py           mirrored parts, bones, pistons, gears, chains, game rigs
-    export.py            engine copies
-  operators/             operators, one module per area
-  ui/                    sidebar panel and icons
+python tools/build.py
+```
+
+**Layout**
+
+```
+preflight/               the add-on
+  core/                  logic only: checks, UVs, naming, textures, rigging, export
+  operators/             the buttons, one module per area
+  ui/                    the sidebar panel
   icons/                 icon PNGs
+  properties.py          scene, material and window-manager settings
+  preferences.py         add-on preferences and new-file defaults
+  issues.py              the Issues list
+  integrations.py        UVPackmaster 4 and Zen UV
+  migrate.py             moves Bake Prep data to Pre-Flight names on load
 docs/                    the User Guide and its pictures
-tools/                   build.py (package zip), make_icons.py (icons)
+tools/                   build.py (package zip), make_icons.py (redraw the icons)
 ```
