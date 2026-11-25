@@ -1,12 +1,12 @@
 # Pre-Flight User Guide
 
-Pre-Flight is a Blender add-on that gets your low and high poly meshes ready to bake, checks them for problems, and rigs hard-surface models such as vehicles and machines. This guide covers version 3.4.0, one tab at a time.
+Pre-Flight is a Blender add-on that gets your low and high poly meshes ready to bake, checks them for problems, and rigs hard-surface models such as vehicles and machines. This guide covers version 3.4.1, one tab at a time.
 
 ## Getting started
 
 ### Install
 
-1. Download `preflight-3.4.0.zip`. Don't unzip it.
+1. Download `preflight-3.4.1.zip`. Don't unzip it.
 2. In Blender, open **Edit > Preferences > Get Extensions**.
 3. Click the small arrow at the top right and choose **Install from Disk**, then pick the zip. Dragging the zip into the Blender window works too.
 
@@ -258,7 +258,7 @@ Select the cylinder and the rod, with the rod active (selected last), and press 
 
 **Link Gears** makes wheels turn together.
 
-![Three linked gears: the small ones turn faster than the big one](images/27_view_gears.png)
+![Three linked gears turning: the two that mesh turn opposite ways, and the small ones turn faster](images/27_view_gears.gif)
 
 - Select the gears, with the one that drives selected last, then press **Link Gears**. Turn the driving gear and the others follow, faster or slower by their size.
 - **Meshed**: gears that touch. The driven gear turns the opposite way.
@@ -276,7 +276,7 @@ Builds a chain, belt or tank track out of one link. Work down the section from t
 
 ![Rigging page: the Chains & Tracks section](images/12_rig_chains.png)
 
-![A chain built along a path round a sprocket and an idler](images/28_view_chain.png)
+![A chain running round a sprocket and an idler. The sprocket drives the chain and the idler turns with it.](images/28_view_chain.gif)
 
 1. **Make the path.** Select the wheels the chain goes round and press **Path Around Wheels**. It draws a closed path round them, the way a real chain sits. **Offset** pushes the path out from the wheel rims, so links sit on the teeth and not in them. **Axle** is the axis the wheels turn about; leave it on Auto unless it guesses wrong. You can also draw your own curve.
 2. **Count the links.** Select the link and the path, then click the small button next to **Links**. It measures the link and the path and fills in the number that fits best. **Link Axis** is the direction of the link that runs along the chain.
@@ -294,7 +294,7 @@ Makes wheels roll by the right amount when the vehicle moves, so they never slid
 
 ![Rigging page: Wheels & Driving and Drivers](images/13_rig_wheels.png)
 
-![A cart whose wheels roll as the body moves](images/29_view_wheels.png)
+![A cart driving along: its wheels roll as the body moves](images/29_view_wheels.gif)
 
 - **Wheel Spin**: select the wheels, then the vehicle body last, and press it. Move the body and each wheel turns by the distance travelled. Small wheels turn faster than big ones. Tracks built with Chain Along Curve come along with the body.
 - **Travel**: the body's forward axis.

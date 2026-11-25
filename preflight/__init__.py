@@ -17,7 +17,7 @@ blender_manifest.toml instead.
 bl_info = {
     "name": "Pre-Flight",
     "author": "Jordan Moss",
-    "version": (3, 4, 0),
+    "version": (3, 4, 1),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar > Pre-Flight",
     "description": "Prep meshes for baking: hard edges, UV checks, low/high pairs",

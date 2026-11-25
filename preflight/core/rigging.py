@@ -929,6 +929,46 @@ def _rotation_owner(obj):
     return obj, "", obj
 
 
+def rest_to_delta(obj, spin=None):
+    """Move an unrigged part's resting rotation into its delta rotation, so its rotation
+    channels start at zero and each one turns it about its own local axis.
+
+    Euler channels only turn about the part's own axes when the others are zero: a gear
+    stood on edge (X = 90) and then spun on its Z channel swings about the world's Z,
+    not its axle. Blender applies the delta rotation first and the rotation on top, so
+    with the rest in the delta, a spin on any one channel is about that local axis.
+    Parts on a bone are left alone (their bone's channels already rest at zero), and so
+    are parts whose rotation is animated or driven already, and parts turned only on
+    channel `spin` (the one about to be driven: alone, it is already about its own
+    axis). Returns True if it moved.
+    """
+    if obj is None or bone_target(obj)[0] is not None:
+        return False
+    if obj.rotation_mode in {'QUATERNION', 'AXIS_ANGLE'}:
+        obj.rotation_mode = 'XYZ'  # converts the stored rotation
+    if all(abs(v) < 1e-7 for i, v in enumerate(obj.rotation_euler) if i != spin):
+        return False
+    anim = obj.animation_data
+    if anim is not None:
+        if any(fc.data_path == "rotation_euler" for fc in anim.drivers):
+            return False
+        if anim.action is not None and any(
+                fc.data_path == "rotation_euler" for fc in _action_fcurves(anim.action)):
+            return False
+    bpy.context.view_layer.update()
+    before = obj.matrix_world.copy()
+    old = (obj.rotation_euler.copy(), obj.delta_rotation_euler.copy())
+    rest = obj.delta_rotation_euler.to_matrix() @ obj.rotation_euler.to_matrix()
+    obj.delta_rotation_euler = rest.to_euler(obj.rotation_mode)
+    obj.rotation_euler = (0.0, 0.0, 0.0)
+    bpy.context.view_layer.update()
+    if any(abs(a - b) > 1e-4 for ra, rb in zip(before, obj.matrix_world) for a, b in zip(ra, rb)):
+        obj.rotation_euler, obj.delta_rotation_euler = old  # scaled deltas and the like: leave it
+        bpy.context.view_layer.update()
+        return False
+    return True
+
+
 def channel_axis(obj, axis):
     """(channel index, sign) of `obj`'s local `axis` in the rotation and location
     channels that move it: the object's own, or its bone's when it's rigged. A bone
@@ -956,6 +996,8 @@ def link_rotation(driver, driven, axis='Z', mode='MESHED', ratio=None):
     is bound to a bone, the bone is driven instead of the object.
     """
     src_axis, dst_axis = wheel_axle(driver, axis), wheel_axle(driven, axis)
+    rest_to_delta(driver, AXES[src_axis[-1]])
+    rest_to_delta(driven, AXES[dst_axis[-1]])
     if ratio is None:
         ratio = spin_radius(driver, src_axis) / spin_radius(driven, dst_axis)
     sign = -1.0 if mode == 'MESHED' else 1.0
@@ -1228,6 +1270,7 @@ def wheel_spin(body, wheels, travel_axis='Y', spin_axis='AUTO', reverse=False):
     """
     for wheel in wheels:
         _clear_wheel_drivers(wheel)
+        rest_to_delta(wheel, AXES[wheel_axle(wheel, spin_axis)[-1]])
     _carry_wheels(body, wheels)
     bpy.context.view_layer.update()
     owner, bone = _world_owner(body)
@@ -1708,6 +1751,7 @@ def drive_chain_by(rig, curve, sprocket, axis='AUTO'):
     replacing whatever drove it. A sprocket that was following the chain stops, so
     there's no loop."""
     axis = wheel_axle(sprocket, axis)
+    rest_to_delta(sprocket, AXES[axis[-1]])
     src_id, src_prefix, src_struct = _rotation_owner(sprocket)
     if src_struct.rotation_mode in {'QUATERNION', 'AXIS_ANGLE'}:
         src_struct.rotation_mode = 'XYZ'
@@ -1746,6 +1790,7 @@ def drive_from_chain(rig, curve, wheel, axis='AUTO'):
     path = f"{dst_prefix}rotation_euler"
     if src is not None and src[0] == dst_id and src[1].startswith(path):
         raise ValueError(f"'{wheel.name}' drives the chain already")
+    rest_to_delta(wheel, AXES[axis[-1]])
     if dst_struct.rotation_mode in {'QUATERNION', 'AXIS_ANGLE'}:
         dst_struct.rotation_mode = 'XYZ'
     bpy.context.view_layer.update()

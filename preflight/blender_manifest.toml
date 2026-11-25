@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "preflight"
-version = "3.4.0"
+version = "3.4.1"
 name = "Pre-Flight"
 tagline = "Pre-bake prep and checks for low and high poly meshes"
 maintainer = "Jordan Moss"
