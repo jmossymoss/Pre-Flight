@@ -733,6 +733,42 @@ missed rays and parts far from the high, and gives the ray distances to use"""
         return {'FINISHED'}
 
 
+class PREFLIGHT_OT_run_all_checks(bpy.types.Operator):
+    """Run every check in one go: Validate on the selected meshes (or the Low and High
+collections), Names, Projection, and Check Rig when there's a rig"""
+    bl_idname = "preflight.run_all_checks"
+    bl_label = "Run All Checks"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        s = context.scene.preflight
+        if not ((s.low_collection and s.high_collection) or selected_meshes(context)):
+            cls.poll_message_set("Select meshes, or set the Low and High collections")
+            return False
+        return True
+
+    def execute(self, context):
+        meshes = selected_meshes(context) or names_check_objects(context)[0]
+        ran = []
+        if meshes:
+            run_mesh_check(context, meshes)
+            ran.append("Validate")
+        run_names_check(context)
+        ran.append("Names")
+        if run_projection_check(context):
+            ran.append("Projection")
+        armatures = rig_check_armatures(context)
+        if armatures:
+            run_rig_check(context, armatures)
+            ran.append("Rig")
+        errors, warnings, infos = issue_store.counts(context.window_manager.preflight)
+        self.report({'WARNING'} if errors or warnings else {'INFO'},
+                    f"{', '.join(ran)}: {errors} error(s), {warnings} warning(s), "
+                    f"{infos} info: see Issues")
+        return {'FINISHED'}
+
+
 class PREFLIGHT_OT_offset_stacked_uvs(MeshOperator, bpy.types.Operator):
     """Move stacked UV islands (mirrored or duplicated parts) one tile right for baking,
 keeping one copy of each in place. Restore puts them back"""
@@ -789,6 +825,7 @@ classes = (
     PREFLIGHT_OT_clear_issues,
     PREFLIGHT_OT_fix_all_issues,
     PREFLIGHT_OT_check_projection,
+    PREFLIGHT_OT_run_all_checks,
     PREFLIGHT_OT_offset_stacked_uvs,
     PREFLIGHT_OT_restore_stacked_uvs,
     PREFLIGHT_OT_suggest_padding,

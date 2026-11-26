@@ -10,7 +10,7 @@ from bpy.props import (BoolProperty, CollectionProperty, EnumProperty, FloatProp
 
 from . import integrations
 from . import issues as issue_store
-from .core import bakers, export, rigging, texel
+from .core import bakers, export, exporter, rigging, texel
 from .core.naming import SUFFIX_STYLES
 from .overlay import overlay_sync
 from .texel_overlay import texel_overlay_invalidate, texel_overlay_sync
@@ -325,7 +325,14 @@ class PreflightSceneSettings(bpy.types.PropertyGroup):
                ('CHAINED', "Chained", "Sprockets on one chain or belt: same direction")],
         default='MESHED',
     )
-    rig_gear_axis: EnumProperty(
+    rig_use_bones: BoolProperty(
+        name="Use Bones", default=True,
+        description="Build pistons, chains and the drive control on an armature (what game "
+                    "engines need). Off: build them from the parts themselves and a few "
+                    "empties, with no armature, for renders and animation in Blender. "
+                    "Gears, wheels and hinges work on parts either way",
+    )
+    rig_gear_axis: EnumProperty(  # no longer shown: Axle (rig_wheel_spin_axis) is used
         name="Spin Axis",
         items=[('X', "X", ""), ('Y', "Y", ""), ('Z', "Z", ""),
                ('AUTO', "Auto", "Each gear's own round axis")],  # after X/Y/Z: saved files keep theirs
@@ -393,8 +400,9 @@ class PreflightSceneSettings(bpy.types.PropertyGroup):
                                 "unlike the other two)"),
                ('X', "X", "The wheel's local X"), ('Y', "Y", "The wheel's local Y"),
                ('Z', "Z", "The wheel's local Z")],
-        default='AUTO', description="The wheel's own axis it spins about (Wheel Spin and "
-                                    "Path Around Wheels)",
+        default='AUTO', description="The axis a gear, sprocket or wheel turns about, in "
+                                    "its own space. One setting for Link Gears, Path "
+                                    "Around Wheels and Wheel Spin",
     )
     rig_wheel_reverse: BoolProperty(
         name="Reverse", default=False,
@@ -438,6 +446,46 @@ class PreflightSceneSettings(bpy.types.PropertyGroup):
     export_combine: EnumProperty(
         name="Combine", items=export.COMBINE_ITEMS, default='ALL',
         description="How the engine copies' parts are combined",
+    )
+    export_folder: StringProperty(
+        name="Export Folder", subtype='DIR_PATH',
+        description="Where Export for Baker and Export to Engine write their files. "
+                    "Empty: an 'export' folder beside the .blend",
+    )
+    export_name: StringProperty(
+        name="Name",
+        description="File name the exports start with. Empty: the .blend's name",
+    )
+    bake_files: EnumProperty(
+        name="Files", items=exporter.FILES_ITEMS, default='AUTO',
+        description="How Export for Baker splits the low and the high",
+    )
+    bake_export_cages: BoolProperty(
+        name="Cages", default=True,
+        description="Also write the cages made by Make Cages, to <name>_cage.fbx",
+    )
+    cage_margin: FloatProperty(
+        name="Margin", subtype='PERCENTAGE', min=0.0, max=200.0, default=10.0,
+        description="Extra added to the measured ray distance, for Make Cages and Set "
+                    "Bake Distances",
+    )
+    engine_target: EnumProperty(
+        name="Engine", items=exporter.ENGINE_ITEMS, default='UNREAL',
+        description="The game engine Export to Engine writes for",
+    )
+    engine_animation: BoolProperty(
+        name="Animation", default=True,
+        description="Export to Engine: include the rig's animation over the scene's "
+                    "frame range (drivers and constraints are baked into the file)",
+    )
+    export_collision: EnumProperty(
+        name="Collision", items=exporter.COLLISION_ITEMS, default='NONE',
+        description="Collision meshes Export to Engine adds for meshes that aren't rigged",
+    )
+    normal_format: EnumProperty(
+        name="Normal Maps", items=exporter.NORMAL_ITEMS, default='OPENGL',
+        description="The normal map format you bake to. DirectX maps are shown in Blender "
+                    "with their green channel flipped",
     )
 
     # Issues marked as intended (keys from issues.ignore_key)
@@ -490,20 +538,29 @@ class PreflightMaterialSettings(bpy.types.PropertyGroup):
 
 # --- Panel tabs ---
 
-# (id, name, description, accent). Issues has no accent: its icon shows the results.
+# (id, name, description, accent), in the order the work goes: set up the pairs and the
+# baker, prepare shading and UVs, check, fix, export; rigging is its own job at the end
+# (a rig goes back to Export for the engine).
+# Issues has no accent: its icon shows the results.
 TABS = (
+    ('PAIRS', "Low / High", "Collections, pairing, naming and exploding", "pairs"),
+    ('BAKER', "Baker", "Baker preset and ID colours", "baker"),
     ('SHADING', "Shading",
      "Hard edges, triangulation, custom normals and loading exported textures", "shading"),
     ('UVS', "UVs", "Mirror/array offsets, packing, stacking and texel density", "uvs"),
-    ('PAIRS', "Low / High", "Collections, pairing, naming, exploding and engine meshes",
-     "pairs"),
-    ('BAKER', "Baker", "Baker preset and ID colours", "baker"),
-    ('RIGGING', "Rigging", "Hard surface rigging: mirrored parts, bones on origins, "
-                           "pistons, gears, chains and game-ready rigs", "rigging"),
     ('CHECKS', "Checks", "Full prep, validation, thresholds, fixes and problem selection",
      "checks"),
     ('ISSUES', "Issues", "Results of the last checks", None),
+    ('EXPORT', "Export", "Files for the baker, cages, and the engine mesh and rig for "
+                         "your game engine", "export"),
+    ('RIGGING', "Rigging", "Hard surface rigging: mirrored parts, bones on origins, "
+                           "pistons, gears, chains and game-ready rigs", "rigging"),
 )
+RIG_PAGES = [
+    ('BONES', "Bones", "Mirror parts, bones on origins, hinges and IK"),
+    ('MECHANISMS', "Mechanisms", "Pistons, gears, chains, tracks and wheels"),
+    ('FINISH', "Finish", "Controls, checks and making the rig game ready"),
+]
 _tab_items_cache = []  # enum items must stay referenced while Blender uses them
 
 
@@ -536,6 +593,10 @@ class PreflightWMSettings(bpy.types.PropertyGroup):
     tab: EnumProperty(
         name="Tab", description="Which part of Pre-Flight to show",
         items=_tab_items, default=0,
+    )
+    rig_page: EnumProperty(
+        name="Rigging Page", description="Which part of the Rigging tab to show",
+        items=RIG_PAGES, default='BONES',
     )
     overlay_mirror: BoolProperty(
         name="Mirror", description="Show the UV offset overlay for Mirror modifiers",

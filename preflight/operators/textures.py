@@ -451,6 +451,8 @@ maps: Pre-Flight's nodes are reused, the rest of the node tree is left alone"""
             if tex_set is None:
                 continue
             maps_total += len(setup_material(mat, tex_set))
+            if context.scene.preflight.normal_format == 'DIRECTX' and normal_setups(mat):
+                set_flip_green(mat, True)
             udims += sum(m.is_udim for m in tex_set.maps.values())
             loaded += 1
             if tex_set.matched_by != 'name':

@@ -40,8 +40,11 @@ The panel is in the 3D View sidebar: press **N** and click the **Pre-Flight** ta
 2. **Baker:** pick the baker you use.
 3. **Shading:** set the map size under Textures.
 4. **UVs:** offset mirrored copies with **Mirror +1U**, then **Pack Selected**.
-5. **Checks:** press **Full Prep**, then **Validate**, **Names** and **Projection**.
+5. **Checks:** press **Full Prep**, then **Run All Checks**.
 6. **Issues:** press **Fix All**, then fix what's left by hand.
+7. **Export:** press **Export for Baker** to write the low and high files.
+
+The tabs run in this order, top to bottom. Rigging is its own job, at the end.
 
 ## What's in the panel
 
@@ -51,13 +54,14 @@ A tab strip runs down the left side of the panel. Each tab is one page:
 
 | Tab | What it's for |
 | --- | --- |
+| **Low / High** | Collections, pairing, naming and explode |
+| **Baker** | Presets for each baker, and ID colours |
 | **Shading** | Hard edges, triangulation, custom normals, and loading baked textures |
 | **UVs** | Mirrored copies, packing, stacking and texel density |
-| **Low / High** | Collections, pairing, naming, explode and the engine mesh |
-| **Baker** | Presets for each baker, and ID colours |
-| **Rigging** | Bones, hinges, pistons, gears, chains, tracks, wheels and game export |
 | **Checks** | Full Prep and the checks that look for bake problems |
 | **Issues** | The list of what the checks found, with fixes |
+| **Export** | Files for the baker, cages, and the engine mesh and rig |
+| **Rigging** | Bones, hinges, pistons, gears, chains, tracks, wheels and game export |
 
 ## Features
 
@@ -89,8 +93,6 @@ A tab strip runs down the left side of the panel. Each tab is one page:
   each high with the low it overlaps most.
 - **Explode:** moves pairs apart so neighbours don't bake onto each other, and puts
   them back.
-- **Engine Mesh:** copies the lows for the engine with modifiers applied, `_low`
-  removed and parts combined. The bake setup isn't touched.
 
 ### Baker
 
@@ -98,9 +100,29 @@ A tab strip runs down the left side of the panel. Each tab is one page:
   baker's side.
 - **ID Colors:** flat colours on the highs for an ID map, per object, part or material.
 
+### Export
+
+- **Export for Baker:** writes the low and high as FBX, in one file or two as your
+  baker wants them, with modifiers applied. **Normals** sets OpenGL or DirectX; with
+  DirectX, Load Textures flips the green channel for you.
+- **Cage & Ray Distance:** **Make Cages** builds a cage for each low from what the
+  Projection check measures. **Set Bake Distances** puts the same distances into
+  Blender's own bake.
+- **Export to Engine:** makes the engine mesh and writes it with its rig and animation,
+  set up for Unreal (FBX), Unity (FBX) or Godot (glTF). It can add box or convex hull
+  collision meshes, named the way each engine picks them up.
+- **Make Engine Mesh:** only makes the engine copy of the lows: modifiers applied,
+  `_low` removed and parts combined. The bake setup isn't touched.
+
 ### Rigging
 
-For hard-surface models. Parts stay rigid and move on bones.
+For hard-surface models. Parts stay rigid and move on bones. The tab has three pages:
+Bones, Mechanisms and Finish.
+
+**Use Bones** is on by default, which is what game engines need. Turn it off to build
+pistons, chains and the drive control from the parts themselves and a few empties, with
+no armature, for renders and animation in Blender. Gears, wheels and hinges work on
+parts either way. IK, controls and Make Game Ready need bones.
 
 **Bones**
 
@@ -110,11 +132,19 @@ For hard-surface models. Parts stay rigid and move on bones.
   a root. Parts are bound by bone parent, rigid weights, or with their own hierarchy
   kept.
 - **Bone from Hinge** and **Origin to Hinge:** take a hinge from an Edit Mode selection.
-- **Hinge Limits:** one axis, within a range.
+- **Hinge Limits:** one axis, within a range. The eyedroppers take Min and Max from how
+  the part is turned now. A part with no bone becomes a hinge itself.
 - **IK Chain:** a target and a pole on a chain of bones, such as an excavator arm.
 
 **Mechanisms**
 
+Above each button, a line shows what the selection would be to that tool, such as
+"Driver: GearA | Follow: GearB". One **Axle** setting covers gears, paths and wheels.
+
+- **Test:** plays the active part's motion and puts it back. A hinge swings through its
+  limits, a vehicle drives forward and back, anything else turns once.
+- **Built So Far:** lists every mechanism in the scene. Click a row to select its
+  parts, or the X to remove what the tool added.
 - **Piston:** a cylinder and rod that stay lined up between two mounts.
 - **Link Gears:** gears turn together by their size ratio, meshed or chained. With a
   chain or track selected, the active wheel drives it and the other wheels follow.
@@ -123,6 +153,8 @@ For hard-surface models. Parts stay rigid and move on bones.
   - **Calculate Links** works out how many links fit.
   - **Chain Along Curve** builds the chain, one bone per link, driven by a sprocket.
   - **Roll Links** turns the finished links to face the right way.
+  - **Rebuild Chain** builds a chain again with a new link count, keeping its roll,
+    what drives it and the wheels that turn with it.
   - **Instances** builds the chain from linked copies of one editable link.
 - **Wheel Spin:** wheels roll by the distance the vehicle really moves. Tracks
   counter-rotate when it spins on the spot.
@@ -140,6 +172,8 @@ For hard-surface models. Parts stay rigid and move on bones.
 ### Checks and Issues
 
 - **Full Prep:** hard edges and triangulation in one click.
+- **Run All Checks:** Validate, Names, Projection and Check Rig in one click. The
+  results are saved with the file.
 - **Validate**, **Names** and **Projection:** look for bake problems, naming slips, and
   rays that miss the high.
 - **Issues:** click an issue to isolate and frame it. **Select** picks the problem
@@ -185,7 +219,8 @@ python tools/build.py
 
 ```
 preflight/               the add-on
-  core/                  logic only: checks, UVs, naming, textures, rigging, export
+  core/                  logic only: checks, UVs, naming, textures, rigging, mechanisms,
+                         export
   operators/             the buttons, one module per area
   ui/                    the sidebar panel
   icons/                 icon PNGs

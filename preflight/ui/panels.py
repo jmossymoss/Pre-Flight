@@ -25,6 +25,7 @@ from ..utils import selected_meshes
 from . import icons
 
 TWO_COLUMN_WIDTH = 300  # sidebar width (at UI scale 1) from which grids use two columns
+MECHANISM_ROWS = 24     # most rows the Rigging tab's list of mechanisms draws
 
 # Baker preset settings -> labels for the "Pre-Flight Sets" list.
 BAKER_SETTING_LABELS = {
@@ -233,7 +234,7 @@ class VIEW3D_PT_preflight(PreflightPanel, bpy.types.Panel):
         page = row.column()
         self.draw_top(page, context)
 
-        cls = PAGES.get(wm.tab, VIEW3D_PT_preflight_shading)
+        cls = PAGES.get(wm.tab, VIEW3D_PT_preflight_pairs)
         page.separator(factor=0.5)
         title = page.box().row(align=True)
         title.alignment = 'CENTER'
@@ -379,6 +380,7 @@ class VIEW3D_PT_preflight_uvs(Page):
             sub.label(text=f"Padding {mapsize.padding(ms)}px")
         else:
             row.prop(s, "padding")
+            row.operator("preflight.suggest_padding", text="", icon='FILE_REFRESH')
         row.prop(s, "padding_auto", toggle=True)
         g.prop(s, "pack_use_padding")
         g = grid(body, context)
@@ -484,11 +486,6 @@ class VIEW3D_PT_preflight_pairs(Page):
         row.operator("preflight.explode", text="Explode")
         row.operator("preflight.unexplode", text="Restore")
 
-        body = section(layout, "Engine Mesh", "pairs")
-        hint(body, "Selected lows, or Low collection")
-        labelled(body, s, "export_combine", "Combine")
-        body.operator("preflight.engine_copy", icon='DUPLICATE')
-        hint(body, "Bake setup is left as it is")
 
 
 class VIEW3D_PT_preflight_baker(Page):
@@ -533,18 +530,87 @@ class VIEW3D_PT_preflight_baker(Page):
         g.operator("preflight.clear_id_colors", text="Clear", icon='X')
 
 
+class VIEW3D_PT_preflight_export(Page):
+    bl_label = "Export"
+
+    def draw(self, context):
+        from ..core import bakers, exporter
+        s = context.scene.preflight
+        layout = self.layout
+
+        body = section(layout, "Files", "export", icon='FILE_FOLDER')
+        body.prop(s, "export_folder", text="", placeholder="Export folder")
+        body.prop(s, "export_name", text="", icon='FILE', placeholder="File name")
+        name = exporter.asset_name(context, s.export_name)
+        hint(body, "Empty: an 'export' folder beside the .blend, named after it")
+
+        body = section(layout, "For the Baker", "export", icon='EXPORT')
+        baker = bakers.BAKERS[s.baker]["name"] if s.baker in bakers.BAKERS else "Custom"
+        hint(body, f"Baker: {baker} (set on the Baker tab)")
+        g = grid(body, context, align=False)
+        labelled(g, s, "bake_files", "Files")
+        labelled(g, s, "normal_format", "Normals")
+        g.prop(s, "bake_export_cages")
+        body.operator("preflight.export_bake", icon='EXPORT')
+        files = exporter.baker_files(s.baker, s.bake_files)
+        if files is None:
+            hint(body, "This baker works inside Blender: no files needed")
+        else:
+            hint(body, f"{name}_bake.fbx" if files == 'SINGLE'
+                 else f"{name}_low.fbx + {name}_high.fbx")
+
+        body = section(layout, "Cage & Ray Distance", "export", icon='MOD_SOLIDIFY')
+        hint(body, "From what the Projection check measures")
+        g = grid(body, context)
+        g.prop(s, "cage_margin")
+        g.operator("preflight.make_cages", icon='MOD_SOLIDIFY')
+        body.operator("preflight.set_ray_distance", icon='LIGHT_SUN')
+        hint(body, "Set Bake Distances is for baking in Blender")
+
+        body = section(layout, "For the Engine", "export", icon='EXPORT')
+        hint(body, "Selected lows, or Low collection")
+        g = grid(body, context, align=False)
+        labelled(g, s, "engine_target", "Engine")
+        labelled(g, s, "export_combine", "Combine")
+        labelled(g, s, "export_collision", "Collision")
+        g.prop(s, "engine_animation")
+        g = grid(body, context)
+        g.operator("preflight.engine_copy", icon='DUPLICATE')
+        g.operator("preflight.export_engine", icon='EXPORT')
+        hint(body, f"{name}{'.glb' if s.engine_target == 'GODOT' else '.fbx'}"
+                   ": the engine mesh, its rig and animation")
+        hint(body, "Make Engine Mesh only makes the copy, to look at")
+        hint(body, "Bake setup is left as it is")
+
+
 class VIEW3D_PT_preflight_rigging(Page):
     bl_label = "Rigging"
 
     def draw(self, context):
         s = context.scene.preflight
+        wm = context.window_manager.preflight
         layout = self.layout
 
+        layout.row(align=True).prop(wm, "rig_page", expand=True)
         body = section(layout, "Rig", "rigging")
-        body.prop(s, "rig_armature", text="", icon='ARMATURE_DATA')
-        if s.rig_armature is None:
+        g = grid(body, context, align=False)
+        g.prop(s, "rig_use_bones")
+        sub = g.row()
+        sub.active = s.rig_use_bones
+        sub.prop(s, "rig_armature", text="", icon='ARMATURE_DATA')
+        if not s.rig_use_bones:
+            hint(body, "No armature: for Blender, not game engines")
+        elif s.rig_armature is None:
             hint(body, "Bones from Origins makes one")
 
+        if wm.rig_page == 'BONES':
+            self.draw_bones(context, layout, s)
+        elif wm.rig_page == 'MECHANISMS':
+            self.draw_mechanisms(context, layout, s)
+        else:
+            self.draw_finish(context, layout, s)
+
+    def draw_bones(self, context, layout, s):
         body = section(layout, "Mirror Parts", "rigging")
         g = grid(body, context, align=False)
         g.row(align=True).prop(s, "rig_mirror_axis", expand=True)
@@ -553,13 +619,18 @@ class VIEW3D_PT_preflight_rigging(Page):
         g.operator("preflight.mirror_parts", text="Mirror Parts", icon='MOD_MIRROR')
 
         body = section(layout, "Bones from Origins", "rigging")
+        if not s.rig_use_bones:
+            hint(body, "Use Bones is off: parts keep their own parenting")
         g = grid(body, context, align=False)
+        g.active = s.rig_use_bones
         labelled(g, s, "rig_bone_axis", "Axis")
         g.prop(s, "rig_bone_length")
         g.prop(s, "rig_root")
         g.prop(s, "rig_aim_children")
-        labelled(body, s, "rig_bind", "Bind")
-        body.operator("preflight.bones_from_origins", icon='BONE_DATA')
+        col = body.column()
+        col.active = s.rig_use_bones
+        labelled(col, s, "rig_bind", "Bind")
+        col.operator("preflight.bones_from_origins", icon='BONE_DATA')
 
         body = section(layout, "Hinges", "rigging")
         hint(body, "Edit Mode: select the axle or face")
@@ -569,44 +640,74 @@ class VIEW3D_PT_preflight_rigging(Page):
         g = grid(body, context, align=False)
         g.row(align=True).prop(s, "rig_limit_axis", expand=True)
         g.prop(s, "rig_lock_location")
-        g.prop(s, "rig_limit_min")
-        g.prop(s, "rig_limit_max")
-        body.operator("preflight.hinge_limits", icon='CON_ROTLIMIT')
+        for prop, which in (("rig_limit_min", 'MIN'), ("rig_limit_max", 'MAX')):
+            row = g.row(align=True)
+            row.prop(s, prop)
+            row.operator("preflight.limit_from_pose", text="", icon='EYEDROPPER').which = which
+        hint(body, "Eyedropper: take the angle it is turned to now")
+        g = grid(body, context)
+        g.operator("preflight.hinge_limits", icon='CON_ROTLIMIT')
+        g.operator("preflight.test_motion", text="Test", icon='PLAY')
+        hint(body, "Parts with no bone hinge about their own axis")
+
+        body = section(layout, "IK Chain", "rigging", icon='CON_KINEMATIC')
+        if not s.rig_use_bones:
+            hint(body, "IK needs bones")
         g = grid(body, context, align=False)
         g.prop(s, "rig_ik_length")
         g.prop(s, "rig_ik_pole")
         body.prop(s, "rig_ik_follow", text="")
         body.operator("preflight.ik_chain", icon='CON_KINEMATIC')
 
+    def role_hint(self, context, layout, tool, fallback):
+        """What the selection would be to `tool`, or how to select for it."""
+        from ..operators.rigging import roles
+        found = roles(context, tool)
+        if found:
+            _wrapped(layout, context, found, icon='CHECKMARK')
+        else:
+            hint(layout, fallback)
+
+    def draw_mechanisms(self, context, layout, s):
+        body = section(layout, "Axle", "rigging", icon='ORIENTATION_LOCAL')
+        g = grid(body, context, align=False)
+        labelled(g, s, "rig_wheel_spin_axis", "Axle")
+        g.operator("preflight.test_motion", text="Test Active", icon='PLAY')
+        hint(body, "One axle setting for gears, paths and wheels")
+
         body = section(layout, "Pistons", "rigging", icon='CON_STRETCHTO')
-        hint(body, "Select the cylinder and the rod, rod active")
+        self.role_hint(context, body, 'PISTON', "Select the cylinder and the rod, rod active")
         body.operator("preflight.rig_piston", text="Piston", icon='CON_STRETCHTO')
 
         body = section(layout, "Gears", "rigging", icon='PREFERENCES')
-        hint(body, "Select the gears, the driving one active")
+        self.role_hint(context, body, 'GEARS', "Select the gears, the driving one active")
         hint(body, "Or a chain and its wheels: the active wheel drives it")
-        g = grid(body, context, align=False)
-        g.row(align=True).prop(s, "rig_gear_mode", expand=True)
-        labelled(g, s, "rig_gear_axis", "Spin")
+        body.row(align=True).prop(s, "rig_gear_mode", expand=True)
         body.operator("preflight.link_gears", text="Link Gears", icon='PREFERENCES')
 
         body = section(layout, "Chains & Tracks", "rigging", icon='LINKED')
-        hint(body, "No path yet? Select the wheels it goes round")
-        g = grid(body, context, align=False)
+        self.role_hint(context, body, 'PATH', "No path yet? Select the wheels it goes round")
+        g = grid(body, context)
         g.prop(s, "rig_path_offset")
-        labelled(g, s, "rig_wheel_spin_axis", "Axle")
-        body.operator("preflight.path_around_wheels", icon='CURVE_NCURVE')
-        hint(body, "Select the link (+ sprocket) and the path: curve or edge loop")
+        g.operator("preflight.path_around_wheels", icon='CURVE_NCURVE')
+        self.role_hint(context, body, 'CHAIN',
+                       "Select the link (+ sprocket) and the path: curve or edge loop")
         g = grid(body, context, align=False)
         labelled(g, s, "rig_chain_axis", "Link Axis")
         row = g.row(align=True)
         row.prop(s, "rig_chain_count")
         row.operator("preflight.calculate_links", text="", icon='LINENUMBERS_ON')
-        g.prop(s, "rig_chain_instances")
+        inst = g.row()
+        inst.active = s.rig_use_bones
+        inst.prop(s, "rig_chain_instances")
         keep = g.row()
-        keep.active = s.rig_chain_instances
+        keep.active = s.rig_chain_instances or not s.rig_use_bones
         keep.prop(s, "rig_chain_keep_link")
-        body.operator("preflight.chain_along_curve", icon='LINKED')
+        if not s.rig_use_bones:
+            hint(body, "Without bones a chain is always instances")
+        g = grid(body, context)
+        g.operator("preflight.chain_along_curve", icon='LINKED')
+        g.operator("preflight.rebuild_chain", icon='FILE_REFRESH')
         row = body.row(align=True)
         row.label(text="Roll Links")
         for angle, text, icon in ((-90, "-90°", 'LOOP_BACK'), (90, "+90°", 'LOOP_FORWARDS'),
@@ -614,21 +715,52 @@ class VIEW3D_PT_preflight_rigging(Page):
             row.operator("preflight.roll_links", text=text, icon=icon).angle = math.radians(angle)
 
         body = section(layout, "Wheels & Driving", "rigging", icon='DRIVER_ROTATIONAL_DIFFERENCE')
-        hint(body, "Select the wheels, then the vehicle body (active)")
+        self.role_hint(context, body, 'WHEELS',
+                       "Select the wheels, then the vehicle body (active)")
         g = grid(body, context, align=False)
         labelled(g, s, "rig_wheel_travel_axis", "Travel")
-        labelled(g, s, "rig_wheel_spin_axis", "Axle")
         g.prop(s, "rig_wheel_reverse")
         body.operator("preflight.wheel_spin", icon='DRIVER_ROTATIONAL_DIFFERENCE')
         g = grid(body, context)
         g.operator("preflight.drive_control", icon='ORIENTATION_GIMBAL')
         g.operator("preflight.bake_wheel_roll", icon='KEYINGSET')
 
+        self.draw_mechanism_list(context, layout)
+
+    def draw_mechanism_list(self, context, layout):
+        from ..core import mechanisms
+        body = section(layout, "Built So Far", "rigging", icon='OUTLINER')
+        if body is _CLOSED:
+            return
+        rows = mechanisms.find(context.scene)
+        if not rows:
+            hint(body, "Nothing yet: what the tools build is listed here")
+            return
+        col = body.column(align=True)
+        for mech in rows[:MECHANISM_ROWS]:
+            row = col.row(align=True)
+            text = f"{mech.label}  ({mech.detail})" if mech.detail else mech.label
+            left = row.row(align=True)
+            left.alignment = 'LEFT'
+            left.operator("preflight.mechanism_select", text=text, emboss=False,
+                          icon=mechanisms.KIND_ICONS.get(mech.kind, 'DOT')
+                          ).names = "|".join(mech.objects)
+            right = row.row(align=True)
+            right.alignment = 'RIGHT'
+            right.operator("preflight.mechanism_remove", text="", icon='X',
+                           emboss=False).key = mech.key
+        if len(rows) > MECHANISM_ROWS:
+            hint(body, f"and {len(rows) - MECHANISM_ROWS} more")
+        hint(body, "Click a row to select it, X to remove it")
+
+    def draw_finish(self, context, layout, s):
         body = section(layout, "Drivers", "rigging", icon='DRIVER')
         hint(body, "Selected objects, or selected bones in Pose Mode")
         body.operator("preflight.clear_drivers", icon='TRASH')
 
         body = section(layout, "Controls", "rigging", icon='GROUP_BONE')
+        if not s.rig_use_bones:
+            hint(body, "Controls are for rigs with bones")
         hint(body, "Whole rig: sort bones and give each control a shape")
         body.operator("preflight.setup_controls", icon='GROUP_BONE')
         hint(body, "Pose Mode: click bones, pick a shape and axis")
@@ -642,6 +774,8 @@ class VIEW3D_PT_preflight_rigging(Page):
         g.operator("preflight.control_shape_reset", icon='FILE_REFRESH')
 
         body = section(layout, "Game Ready", "rigging")
+        if not s.rig_use_bones:
+            hint(body, "Game engines need bones: turn Use Bones on")
         g = grid(body, context, align=False)
         g.prop(s, "rig_bake")
         g.prop(s, "rig_join")
@@ -649,6 +783,7 @@ class VIEW3D_PT_preflight_rigging(Page):
         g.operator("preflight.check_rig", icon='CHECKMARK')
         g.operator("preflight.make_game_ready", icon='EXPORT')
         body.operator("preflight.make_rigid", icon='MOD_VERTEX_WEIGHT')
+        hint(body, "Then Export to Engine, on the Export tab")
 
 
 class VIEW3D_PT_preflight_checks(Page):
@@ -662,6 +797,8 @@ class VIEW3D_PT_preflight_checks(Page):
         row = body.row(align=True)
         row.scale_y = 1.4
         row.operator("preflight.full_prep", icon='SHADERFX', depress=True)
+        row.operator("preflight.run_all_checks", icon='CHECKMARK')
+        hint(body, "Or one check at a time:")
         g = grid(body, context)
         g.operator("preflight.validate", text="Validate", icon='CHECKMARK')
         g.operator("preflight.check_names", text="Names", icon='SORTALPHA')
@@ -978,13 +1115,14 @@ class VIEW3D_PT_preflight_issues(Page):
 
 # Tab id -> page, in strip order (ids match properties.TABS).
 PAGES = {
-    'SHADING': VIEW3D_PT_preflight_shading,
-    'UVS': VIEW3D_PT_preflight_uvs,
     'PAIRS': VIEW3D_PT_preflight_pairs,
     'BAKER': VIEW3D_PT_preflight_baker,
-    'RIGGING': VIEW3D_PT_preflight_rigging,
+    'SHADING': VIEW3D_PT_preflight_shading,
+    'UVS': VIEW3D_PT_preflight_uvs,
     'CHECKS': VIEW3D_PT_preflight_checks,
     'ISSUES': VIEW3D_PT_preflight_issues,
+    'EXPORT': VIEW3D_PT_preflight_export,
+    'RIGGING': VIEW3D_PT_preflight_rigging,
 }
 
 PANELS = (VIEW3D_PT_preflight,)

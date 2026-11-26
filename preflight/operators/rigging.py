@@ -8,7 +8,7 @@ import math
 import bpy
 from mathutils import Vector
 
-from ..core import export, rigging
+from ..core import export, mechanisms, rigging
 from ..core.dependencies import collection_meshes
 from ..utils import object_mode
 from .issues import report_check, rig_check_armatures, run_rig_check
@@ -46,6 +46,51 @@ def _pivot(context):
 
 class RigOperator:
     bl_options = {'REGISTER', 'UNDO'}
+
+
+def _short(names, limit=2):
+    names = list(names)
+    more = f" +{len(names) - limit}" if len(names) > limit else ""
+    return ", ".join(names[:limit]) + more
+
+
+def roles(context, tool):
+    """One line saying what each selected object would be to `tool` ('GEARS', 'PISTON',
+    'WHEELS', 'PATH' or 'CHAIN'), or "" when the selection doesn't fit it yet."""
+    active = context.active_object
+    if tool == 'PISTON':
+        parts = _parts(context)
+        if len(parts) == 2 and active in parts:
+            other = next(o for o in parts if o != active)
+            return f"Rod: {active.name}  |  Cylinder: {other.name}"
+    elif tool == 'GEARS':
+        chain, wheels = _gear_chain(context)
+        if chain is not None and wheels:
+            if active in wheels:
+                rest = [w.name for w in wheels if w is not active]
+                return (f"{active.name} drives the chain"
+                        + (f"  |  Follow: {_short(rest)}" if rest else ""))
+            return f"Turn with the chain: {_short(w.name for w in wheels)}"
+        parts = _parts(context)
+        if chain is None and len(parts) >= 2 and active in parts:
+            return (f"Driver: {active.name}  |  Follow: "
+                    f"{_short(o.name for o in parts if o != active)}")
+    elif tool == 'WHEELS':
+        parts = _parts(context)
+        if context.mode == 'OBJECT' and len(parts) >= 2 and active in parts:
+            return f"Body: {active.name}  |  {len(parts) - 1} wheel(s)"
+    elif tool == 'PATH':
+        wheels = [o for o in context.selected_objects if o.type == 'MESH']
+        if context.mode == 'OBJECT' and len(wheels) >= 2 and _chain_path(context) is None:
+            return f"Path round {len(wheels)} wheels: {_short(o.name for o in wheels)}"
+    elif tool == 'CHAIN':
+        path = _chain_path(context)
+        meshes = [o for o in context.selected_objects if o.type == 'MESH' and o is not path]
+        if path is not None and meshes:
+            link, sprocket, _ignored = rigging.chain_parts(meshes)
+            return (f"Link: {link.name}  |  Path: {path.name}"
+                    + (f"  |  Driven by: {sprocket.name}" if sprocket else ""))
+    return ""
 
 
 # --- Parts and bones ---
@@ -187,23 +232,42 @@ def _hinge_bones(context):
     return rig, names
 
 
+def _hinge_objects(context):
+    """Selected parts with no bone: they become hinges themselves."""
+    if context.mode == 'POSE':
+        return []
+    return [o for o in _parts(context) if rigging.bone_target(o)[0] is None]
+
+
 class PREFLIGHT_OT_hinge_limits(RigOperator, bpy.types.Operator):
     """Make the selected bones (or the selected parts' bones) hinges: they turn around
-one axis within the limits, with the other axes locked"""
+one axis within the limits, with the other axes locked. A part with no bone becomes a
+hinge itself, about its own axis"""
     bl_idname = "preflight.hinge_limits"
     bl_label = "Hinge Limits"
 
     @classmethod
     def poll(cls, context):
         rig, names = _hinge_bones(context)
-        return rig is not None and bool(names)
+        if not (rig is not None and names) and not _hinge_objects(context):
+            cls.poll_message_set("Select the parts to hinge (or their bones in Pose Mode)")
+            return False
+        return True
 
     def execute(self, context):
         s = context.scene.preflight
         rig, names = _hinge_bones(context)
-        count = rigging.hinge_limits(rig, names, s.rig_limit_axis, s.rig_limit_min,
-                                     s.rig_limit_max, s.rig_lock_location)
-        self.report({'INFO'}, f"{count} hinge(s) limited on {s.rig_limit_axis}")
+        count = 0
+        if rig is not None and names:
+            count = rigging.hinge_limits(rig, names, s.rig_limit_axis, s.rig_limit_min,
+                                         s.rig_limit_max, s.rig_lock_location)
+        loose = _hinge_objects(context)
+        for obj in loose:
+            mechanisms.hinge_limits_object(obj, s.rig_limit_axis, s.rig_limit_min,
+                                           s.rig_limit_max, s.rig_lock_location)
+        note = f" ({len(loose)} without bones)" if loose else ""
+        self.report({'INFO'}, f"{count + len(loose)} hinge(s) limited on "
+                              f"{s.rig_limit_axis}{note}")
         return {'FINISHED'}
 
 
@@ -266,7 +330,8 @@ turns by the distance travelled divided by its radius"""
         wheels = [o for o in _parts(context) if o != body]
         try:
             radii = rigging.wheel_spin(body, wheels, s.rig_wheel_travel_axis,
-                                       s.rig_wheel_spin_axis, s.rig_wheel_reverse)
+                                       s.rig_wheel_spin_axis, s.rig_wheel_reverse,
+                                       carry=not s.rig_use_bones)
         except ValueError as ex:
             self.report({'ERROR'}, str(ex))
             return {'CANCELLED'}
@@ -295,6 +360,12 @@ isn't rigged yet gets bones first, along with the other selected parts"""
         body = context.active_object
         rig, bone = rigging.bone_target(body)
         made = ""
+        if rig is None and not s.rig_use_bones:
+            forward = rigging.object_axis(body, s.rig_wheel_travel_axis)
+            with object_mode(context):
+                empty = mechanisms.drive_empty(context, body, forward)
+            self.report({'INFO'}, f"'{empty.name}' drives '{body.name}': move and turn it")
+            return {'FINISHED'}
         if rig is None:
             parts = _parts(context) or [body]
             with object_mode(context):
@@ -316,6 +387,13 @@ class PREFLIGHT_OT_bake_wheel_roll(RigOperator, bpy.types.Operator):
 vehicle really travels, so turning and reversing roll right, and remove the drivers"""
     bl_idname = "preflight.bake_wheel_roll"
     bl_label = "Bake Wheel Roll"
+
+    @classmethod
+    def poll(cls, context):
+        if not rigging.wheel_drivers():
+            cls.poll_message_set("No Wheel Spin wheels to bake: run Wheel Spin first")
+            return False
+        return True
 
     def execute(self, context):
         scene = context.scene
@@ -445,6 +523,17 @@ Each gets a bone on its pivot that tracks the other"""
         s = context.scene.preflight
         rod = context.active_object
         cylinder = next(o for o in _parts(context) if o != rod)
+        unrigged = all(rigging.bone_target(o)[0] is None for o in (rod, cylinder))
+        if not s.rig_use_bones and unrigged:
+            with object_mode(context):
+                try:
+                    mechanisms.piston_objects(context, cylinder, rod)
+                except ValueError as ex:
+                    self.report({'ERROR'}, str(ex))
+                    return {'CANCELLED'}
+            self.report({'INFO'}, f"Piston rigged without bones: '{cylinder.name}' and "
+                                  f"'{rod.name}' aim at each other")
+            return {'FINISHED'}
         with object_mode(context):
             rig = _rig(context, create_from=[cylinder, rod])
             try:
@@ -500,14 +589,14 @@ selection, the selected wheels turn with the chain instead"""
             if context.active_object in wheels:
                 # The active wheel drives (as in gear mode): it slides the chain.
                 driver = context.active_object
-                rigging.drive_chain_by(rig, curve, driver, s.rig_gear_axis)
+                rigging.drive_chain_by(rig, curve, driver, s.rig_wheel_spin_axis)
                 wheels = [w for w in wheels if w is not driver]
                 lead = f"'{driver.name}' drives the chain; "
             elif rigging._chain_source(rig, curve) is None:
                 lead = "nothing drives the chain yet (make a wheel active to); "
             for wheel in wheels:
                 try:
-                    rigging.drive_from_chain(rig, curve, wheel, s.rig_gear_axis)
+                    rigging.drive_from_chain(rig, curve, wheel, s.rig_wheel_spin_axis)
                     turned.append(wheel.name)
                 except ValueError:
                     skipped.append(wheel.name)
@@ -518,7 +607,7 @@ selection, the selected wheels turn with the chain instead"""
             return {'FINISHED'}
         driver = context.active_object
         driven = [o for o in _parts(context) if o != driver]
-        ratios = [rigging.link_rotation(driver, o, s.rig_gear_axis, s.rig_gear_mode)
+        ratios = [rigging.link_rotation(driver, o, s.rig_wheel_spin_axis, s.rig_gear_mode)
                   for o in driven]
         shown = ", ".join(f"{r:+.2f}" for r in ratios[:4])
         self.report({'INFO'}, f"{len(driven)} part(s) follow '{driver.name}' ({shown})")
@@ -625,12 +714,13 @@ engines. Select a sprocket too to drive it"""
         with object_mode(context):
             if path.type != 'CURVE':
                 path = rigging.curve_from_loop(path)
-            rig = _rig(context, create_from=[link])
+            bones = s.rig_use_bones
+            rig = _rig(context, create_from=[link]) if bones else None
+            instances = s.rig_chain_instances or not bones
             rig, chain, count = rigging.chain_along_curve(
                 context, link, path, rig, axis=s.rig_chain_axis,
-                count=s.rig_chain_count, sprocket=sprocket,
-                instances=s.rig_chain_instances,
-                keep_link=s.rig_chain_instances and s.rig_chain_keep_link)
+                count=s.rig_chain_count, sprocket=sprocket, instances=instances,
+                keep_link=instances and s.rig_chain_keep_link, bones=bones)
         # Leave the new chain selected, so Roll Links works on it straight away.
         for o in context.selected_objects:
             o.select_set(False)

@@ -5,8 +5,8 @@
 
 import bpy
 
-from . import (checks, explode, id_colors, issues, pairs, rigging, shading, textures,
-               uv_offsets, uv_tools)
+from . import (checks, explode, exporting, id_colors, issues, mechanisms, pairs, rigging,
+               shading, textures, uv_offsets, uv_tools)
 
 classes = (
     shading.PREFLIGHT_OT_hard_edges,
@@ -30,6 +30,8 @@ classes = (
     *id_colors.classes,
     *textures.classes,
     *rigging.classes,
+    *mechanisms.classes,
+    *exporting.classes,
 )
 
 

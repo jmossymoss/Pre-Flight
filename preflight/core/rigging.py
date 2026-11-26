@@ -34,6 +34,8 @@ ROOT_BONE = "root"
 CHAIN_PROP = "chain_offset"
 CHAIN_ROLL = "preflight_link_roll"  # on a chain mesh: degrees its links are rolled
 CHAIN_TAG = "preflight_chain"  # on an instanced chain's empty and links: the empty
+CHAIN_LINK = "preflight_chain_link"  # on a chain: the link object it was built from
+CHAIN_AXIS = "preflight_chain_axis"  # on a chain: that link's length axis
 
 _SIDE_RE = re.compile(r"(?<![A-Za-z0-9])(L|R|l|r|Left|Right|left|right|LEFT|RIGHT)"
                       r"(?=$|[._\- ]|\d)")
@@ -1252,7 +1254,34 @@ def _carry_wheels(body, wheels):
     return moved
 
 
-def wheel_spin(body, wheels, travel_axis='Y', spin_axis='AUTO', reverse=False):
+def carry_objects(body, wheels):
+    """Parent unrigged wheels to an unrigged body (where they are), so they go along
+    when the body is moved. Returns the wheels moved."""
+    if bone_target(body)[0] is not None:
+        return []
+    moved = []
+    above = set()
+    obj = body
+    while obj is not None:
+        above.add(obj)
+        obj = obj.parent
+    for wheel in wheels:
+        if bone_target(wheel)[0] is not None or wheel in above:
+            continue
+        parent = wheel.parent
+        while parent is not None and parent is not body:
+            parent = parent.parent
+        if parent is body:
+            continue  # already rides with the body
+        world = wheel.matrix_world.copy()
+        wheel.parent = body
+        wheel.matrix_parent_inverse = body.matrix_world.inverted()
+        wheel.matrix_world = world
+        moved.append(wheel)
+    return moved
+
+
+def wheel_spin(body, wheels, travel_axis='Y', spin_axis='AUTO', reverse=False, carry=False):
     """Turn each wheel by the distance `body` has moved along its `travel_axis` (on the
     ground, in the world) divided by the wheel's radius, so it rolls without sliding.
 
@@ -1272,6 +1301,8 @@ def wheel_spin(body, wheels, travel_axis='Y', spin_axis='AUTO', reverse=False):
         _clear_wheel_drivers(wheel)
         rest_to_delta(wheel, AXES[wheel_axle(wheel, spin_axis)[-1]])
     _carry_wheels(body, wheels)
+    if carry:
+        carry_objects(body, wheels)
     bpy.context.view_layer.update()
     owner, bone = _world_owner(body)
     world = body.matrix_world
@@ -1716,6 +1747,12 @@ def chain_of(obj):
     runs on, else None."""
     rig = chain_rig(obj)
     holder = chain_holder(obj)
+    if rig is not None and rig is holder:  # built without bones
+        for link in chain_links(holder):
+            for con in link.constraints:
+                if con.type == 'FOLLOW_PATH' and con.target is not None:
+                    return rig, con.target
+        return None
     if rig is not None and holder is not None:
         names = {o.parent_bone for o in chain_links(holder)}
     elif rig is not None:
@@ -1729,7 +1766,7 @@ def chain_of(obj):
         return None
     if obj is not None and obj.type == 'CURVE':
         for rig in bpy.data.objects:
-            if rig.type == 'ARMATURE' and chain_prop(obj) in rig.keys():
+            if chain_prop(obj) in rig.keys():
                 return rig, obj
     return None
 
@@ -1824,7 +1861,7 @@ def _winding(curve_obj, centre, axis):
 
 
 def chain_along_curve(context, link, curve, armature=None, axis='X', count=0, sprocket=None,
-                      roll=0.0, instances=False, keep_link=False):
+                      roll=0.0, instances=False, keep_link=False, bones=True):
     """A chain or track: copies of `link` spaced along `curve`, one bone each.
 
     Every link gets a bone with a Follow Path constraint at its own place along the
@@ -1837,12 +1874,16 @@ def chain_along_curve(context, link, curve, armature=None, axis='X', count=0, sp
     its bone (edit the link to change them all), gathered under an empty instead.
     `keep_link` leaves the link itself showing where it is (to edit it there); otherwise
     it's hidden.
-    Returns (armature, chain mesh object or empty, link count).
+    Without `bones` there is no armature: the links are instances that each follow the
+    path themselves, and the slide property is on the chain's empty.
+    Returns (armature or None, chain mesh object or empty, link count).
     """
     index = AXES[axis[-1]]
     length = curve_length(curve)
     pitch = link_pitch(link, axis)
     count = count or fit_links(link, curve, axis)[0]
+    if not bones:
+        return _chain_without_bones(link, curve, axis, count, sprocket, roll, keep_link)
     if armature is None:
         armature = new_armature(context, f"{link.name}_Chain_Rig", parts_base([curve]))
     curve.data.use_path = True
@@ -1956,10 +1997,75 @@ def chain_along_curve(context, link, curve, armature=None, axis='X', count=0, sp
         armature_modifier(chain, armature)
     _keep_world(chain, lambda: setattr(chain, "parent", armature))
     chain[CHAIN_ROLL] = math.degrees(roll) % 360.0
+    chain[CHAIN_LINK], chain[CHAIN_AXIS] = link, axis
     if not keep_link:
         link.hide_set(True)
         link.hide_render = True
     return armature, chain, count
+
+
+def _slide_driver(constraint, owner, prop, place):
+    """Drive a Follow Path constraint's offset from the chain's slide property, wrapped
+    to 0-1, starting at `place` (0-1 round the path)."""
+    drv = constraint.driver_add("offset_factor").driver
+    drv.type = 'SCRIPTED'
+    var = drv.variables.new()
+    var.name = "slide"
+    var.type = 'SINGLE_PROP'
+    var.targets[0].id = owner
+    var.targets[0].data_path = f'["{prop}"]'
+    at = f"({place:.6f} + slide)"
+    drv.expression = f"{at} - floor{at}"
+
+
+def _chain_without_bones(link, curve, axis, count, sprocket, roll, keep_link, holder=None):
+    """chain_along_curve with no armature: see there. With `holder` (an existing chain's
+    empty, its links already removed) the links are built under it again, so its slide
+    and whatever drives that are kept."""
+    index = AXES[axis[-1]]
+    curve.data.use_path = True
+    prop = chain_prop(curve)
+    if holder is None:
+        prefix = link.name
+        if f"{prefix}_chain" in bpy.data.objects:
+            prefix = f"{link.name}_{curve.name}"
+        holder = bpy.data.objects.new(f"{prefix}_chain", None)
+        holder.empty_display_type = 'PLAIN_AXES'
+        holder.empty_display_size = link_pitch(link, axis)
+        for coll in link.users_collection:
+            coll.objects.link(holder)
+        holder.parent = curve  # rides with the path; the links place themselves on it
+        holder[CHAIN_TAG] = holder
+        holder[prop] = 0.0
+    else:
+        prefix = holder.name[:-len("_chain")] if holder.name.endswith("_chain") else holder.name
+    to_forward = {0: Matrix.Rotation(math.pi / 2, 4, 'Z'), 1: Matrix.Identity(4),
+                  2: Matrix.Rotation(-math.pi / 2, 4, 'X')}[index]
+    # Follow Path puts the link's own transform on top of its place on the path, so the
+    # link's own matrix is how it sits there: length along +Y, rolled, at its scale.
+    rot = (Matrix.Rotation(roll, 4, 'Y') @ to_forward
+           @ Matrix.Diagonal(link.matrix_world.to_scale()).to_4x4())
+    for i in range(count):
+        inst = bpy.data.objects.new(f"{prefix}_link_{i:03d}", link.data)
+        for coll in link.users_collection:
+            coll.objects.link(inst)
+        inst.matrix_basis = rot
+        inst[CHAIN_TAG] = holder
+        con = inst.constraints.new('FOLLOW_PATH')
+        con.target = curve
+        con.use_fixed_location = True
+        con.use_curve_follow = True
+        con.forward_axis = 'FORWARD_Y'
+        con.up_axis = 'UP_Z'
+        _slide_driver(con, holder, prop, i / count)
+    if sprocket is not None:
+        drive_chain_by(holder, curve, sprocket)
+    holder[CHAIN_ROLL] = math.degrees(roll) % 360.0
+    holder[CHAIN_LINK], holder[CHAIN_AXIS] = link, axis
+    if not keep_link:
+        link.hide_set(True)
+        link.hide_render = True
+    return None, holder, count
 
 
 LINK_BONE = re.compile(r"_link_\d{3}$")
@@ -1974,14 +2080,17 @@ def chain_holder(obj):
 def chain_links(holder):
     """An instanced chain's link objects, in order."""
     return sorted((o for o in bpy.data.objects if o is not holder and chain_holder(o) is holder),
-                  key=lambda o: o.parent_bone)
+                  key=lambda o: (o.parent_bone, o.name))
 
 
 def chain_rig(obj):
-    """The armature a chain made by chain_along_curve rides on (the chain mesh, or an
-    instanced chain's empty or links), or None if `obj` isn't one."""
+    """What holds the slide of a chain made by chain_along_curve: the armature it rides
+    on (given the chain mesh, or an instanced chain's empty or links), or the empty
+    itself for a chain built without bones. None if `obj` isn't a chain."""
     holder = chain_holder(obj)
     if holder is not None:
+        if any(k.startswith(CHAIN_PROP) for k in holder.keys()):
+            return holder  # built without bones
         rig = holder.parent
         return rig if rig is not None and rig.type == 'ARMATURE' else None
     if obj is None or obj.type != 'MESH':

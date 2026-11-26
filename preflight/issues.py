@@ -12,6 +12,7 @@ ObjectCache keeps Validate's per-object results until the object changes, so a
 re-check only reads edited objects.
 """
 
+import json
 import re
 
 import bpy
@@ -162,6 +163,76 @@ def on_load_post(*_args):
         for coll, flag in CHECKED.values():
             getattr(props, coll).clear()
             setattr(props, flag, False)
+        restore_saved(bpy.context)
+
+
+SAVED_PROP = "preflight_saved_issues"  # on the scene: the issue list as JSON
+
+
+@persistent
+def on_save_pre(*_args):
+    """Keep the issue list in the file, so reopening it shows the last results."""
+    wm = bpy.context.window_manager
+    if not wm or not hasattr(wm, "preflight"):
+        return
+    props = wm.preflight
+    for scene in bpy.data.scenes:
+        if SAVED_PROP in scene:
+            del scene[SAVED_PROP]
+    scene = bpy.data.scenes.get(props.checked_scene)
+    if scene is None or not any_checked(props):
+        return
+    rows = [[i.source, i.severity, i.heading, i.message, [o.name for o in i.objects],
+             i.select_kind, i.fix_kind, i.fix_data, i.select_data] for i in props.issues]
+    checked = {source: [o.name for o in getattr(props, coll)]
+               for source, (coll, flag) in CHECKED.items() if getattr(props, flag)}
+    scene[SAVED_PROP] = json.dumps({"issues": rows, "checked": checked})
+
+
+def restore_saved(context):
+    """Bring back the issue list a file was saved with. Returns True if it had one."""
+    for scene in bpy.data.scenes:
+        raw = scene.get(SAVED_PROP)
+        if not isinstance(raw, str):
+            continue
+        try:
+            data = json.loads(raw)
+            rows, checked = data["issues"], data["checked"]
+        except (ValueError, KeyError, TypeError):
+            continue
+        props = context.window_manager.preflight
+        ignored = ignored_keys(scene)
+        props.issues.clear()
+        for row in rows:
+            source, severity, heading, message, objects, select, fix, fix_data, select_data = row
+            item = props.issues.add()
+            item.name = f"{heading} {message}"
+            item.source, item.severity = source, severity
+            item.heading, item.message = heading, message
+            for name in objects:
+                item.objects.add().name = name
+            item.select_kind, item.fix_kind, item.fix_data = select, fix, fix_data
+            item.select_data = select_data
+            item.ignored = item_key(item) in ignored
+        for source, names in checked.items():
+            if source not in CHECKED:
+                continue
+            coll, flag = CHECKED[source]
+            for name in names:
+                getattr(props, coll).add().name = name
+            setattr(props, flag, True)
+        props.checked_scene = scene.name
+        _state["suppress_select"] = True
+        try:
+            props.issue_index = 0
+        finally:
+            _state["suppress_select"] = False
+        try:
+            _rewatch(context, props)
+        except (AttributeError, RuntimeError):
+            pass
+        return True
+    return False
 
 
 def any_checked(props):
@@ -418,6 +489,7 @@ def register():
         bpy.utils.register_class(cls)
     bpy.app.handlers.depsgraph_update_post.append(on_depsgraph_update)
     bpy.app.handlers.load_post.append(on_load_post)
+    bpy.app.handlers.save_pre.append(on_save_pre)
     bpy.app.handlers.undo_post.append(on_undo_redo)
     bpy.app.handlers.redo_post.append(on_undo_redo)
 
@@ -425,6 +497,7 @@ def register():
 def unregister():
     for lst, fn in ((bpy.app.handlers.depsgraph_update_post, on_depsgraph_update),
                     (bpy.app.handlers.load_post, on_load_post),
+                    (bpy.app.handlers.save_pre, on_save_pre),
                     (bpy.app.handlers.undo_post, on_undo_redo),
                     (bpy.app.handlers.redo_post, on_undo_redo)):
         if fn in lst:
